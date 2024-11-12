@@ -7,7 +7,9 @@ import time
 
 # Настройки
 TOKEN = 'vk1.a.9gh-11AkqZOuknWqXQ8fOJs3XI0f741RrsO18Wog4mKaOF1FeC56WYh7-D_l2mPXaQ7ITq3YJQiWwas5R3oUW_3v4XCIsG5VJqEVIhtce0Y-TMxMG5HRU5dV7vdRaB_pcpDdxuY5epZKj3xX_AyFvHz3JvL81EUZjVYmej2Di7aW3RNB-ZxPLH7zR6VwwQT4RXdTaX20kjVQbKtSgANSEg'
-ADMIN_IDS = [570718317, 291170303]  # ID администраторов
+ADMIN_IDS = [
+    570718317, 291170303, 242662322
+]  # ID администраторов 291170303 - Тёма, 570718317 - Марк, 242662322 - Сергей
 
 # Настройки базы данных MySQL
 DB_HOST = '79.137.195.165'
@@ -34,7 +36,11 @@ user_states = {}
 COUNTRIES = ["Россия", "Импортное"]
 
 
-def send_message(user_id, message, buttons=None, attachment=None):
+def send_message(user_id,
+                 message,
+                 buttons=None,
+                 attachment=None,
+                 add_back=False):
     if buttons:
         keyboard = VkKeyboard(one_time=False)
         for row in buttons:
@@ -43,17 +49,20 @@ def send_message(user_id, message, buttons=None, attachment=None):
                     keyboard.add_line()
                 keyboard.add_button(button['action']['label'],
                                     color=VkKeyboardColor.PRIMARY)
+
+        # Добавляем кнопку "Назад" только если add_back=True
+        if add_back:
+            keyboard.add_line()
+            keyboard.add_button("Назад", color=VkKeyboardColor.NEGATIVE)
         keyboard = keyboard.get_keyboard()
     else:
         keyboard = VkKeyboard.get_empty_keyboard()
 
-    vk.messages.send(
-        user_id=user_id,
-        message=message,
-        random_id=0,
-        keyboard=keyboard,
-        attachment=attachment  # Используем правильно сформированный photo_id
-    )
+    vk.messages.send(user_id=user_id,
+                     message=message,
+                     random_id=0,
+                     keyboard=keyboard,
+                     attachment=attachment)
 
 
 # Функция для загрузки фотографии на сервер VK и возвращения его ID
@@ -98,9 +107,6 @@ def add_beer_stage(user_id, message, attachments=None):
             "stage": "awaiting_photo"
         }
 
-        send_message(user_id, "🍺 Пиво успешно добавлено с фото! 🖼")
-
-        # Сохраняем пиво в базу данных
         try:
             photo_id = upload_photo(
                 photo_url)  # Загружаем фото и получаем photo_id
@@ -115,7 +121,7 @@ def add_beer_stage(user_id, message, attachments=None):
 
             send_message(
                 user_id,
-                f"🎉 Пиво '{name}' успешно Добавлено в базу!\n\n"
+                f"🎉 Пиво '{name}' успешно добавлено в базу!\n\n"
                 f"🍺 Название: {name}\n"
                 f"🏷 Категория: {category}\n"
                 f"🔖 Подкатегория: {subcategory}\n"
@@ -124,10 +130,15 @@ def add_beer_stage(user_id, message, attachments=None):
                 f"🌍 Страна: {country}\n"
                 f"💰 Цена: {price} руб.\n"
                 f"✏️ Описание: {description}\n"
-                f"🖼 Фото: {photo_id}\n",  # Используем photo_id для отображения
+                f"🖼 Фото:\n",  # Используем photo_id для отображения
                 attachment=photo_id)
+
+            # Сбрасываем состояние администратора для подготовки к следующему добавлению
+            admin_states[user_id] = None
+
         except Exception as e:
             send_message(user_id, f"❌ Ошибка при добавлении пива: {e}")
+            return
 
 
 # Функция для удаления пива по ID
@@ -143,32 +154,58 @@ def delete_beer_by_id(user_id, beer_id):
             user_id, f"🗑️ Пиво с ID {beer_id} успешно удалено!\n"
             "🍻 Надеемся, вы добавите что-то новое скоро!")
     except Exception as e:
-        # Сообщение об ошибке
-        send_message(
-            user_id, f"❌ Ошибка при удалении пива с ID {beer_id}: {e}\n"
-            "Пожалуйста, попробуйте снова.")
+        send_message(user_id, f"❌ Ошибка при добавлении пива: {e}")
+        admin_states.pop(user_id, None)  # Сброс состояния
+        return
 
 
 # Функция для просмотра всех доступных пив
 def view_all_beers(user_id):
     with db.cursor() as cursor:
         cursor.execute(
-            "SELECT id, name, category, type, price, photo_url FROM beers")
+            "SELECT id, name, category, type, price, country FROM beers")
         beers = cursor.fetchall()
 
     if beers:
-        message = "🍻 Список всех доступных пив:\n\n"
+        # Создаем словарь для подсчета количества пива по категории и подкатегории, а также для сохранения их названий
+        country_category_data = {}
+
         for beer in beers:
-            beer_id, name, category, beer_type, price, photo_url = beer
-            message += (
-                f"🆔 ID: {beer_id}\n"
-                f"🍺 Название: {name}\n"
-                f"🏷 Категория: {category}\n"
-                f"🔖 Подкатегория: {beer_type}\n"
-                f"💰 Цена: {price} руб.\n"
-                f"🖼 Фото: {photo_url}\n\n"  # Добавляем ссылку на фото
-            )
-        send_message(user_id, message)
+            beer_id, name, category, beer_type, price, country = beer
+
+            # Структура данных: Страна -> Категория -> Подкатегория -> Пиво
+            if country not in country_category_data:
+                country_category_data[country] = {}
+            if category not in country_category_data[country]:
+                country_category_data[country][category] = {}
+            if beer_type not in country_category_data[country][category]:
+                country_category_data[country][category][beer_type] = []
+
+            # Добавляем название пива в соответствующую подкатегорию
+            country_category_data[country][category][beer_type].append(name)
+
+        # Формируем и отправляем сообщения с итогом по странам, категориям и подкатегориям
+        total_beers = 0
+        final_message = "🍻 Итоговый список доступного пива:\n\n"
+
+        for country, categories in country_category_data.items():
+            # Разделитель перед каждой новой страной
+            final_message += "-----------------------------------\n"
+            final_message += f"🌍 Страна: {country}\n\n"
+            for category, types in categories.items():
+                final_message += f"  📘 Категория: {category}\n"
+                for beer_type, names in types.items():
+                    beer_count = len(names)
+                    total_beers += beer_count
+                    # Названия пива перечисляются после подкатегории
+                    final_message += (f"    🔖 Подкатегория: {beer_type} "
+                                      f"(всего {beer_count}):\n")
+                    final_message += "".join(
+                        [f"      ----- {name}\n" for name in names])
+
+        final_message += f"\n🍺 Всего доступно сортов пива: {total_beers}"
+
+        send_message(user_id, final_message)
     else:
         send_message(user_id, "❌ В данный момент нет доступных пив.")
 
@@ -190,10 +227,11 @@ def check_beer_by_id(user_id, beer_id):
                      f"🍷 Алкоголь: {alcohol}%\n"
                      f"🌍 Страна: {country}\n"
                      f"💰 Цена: {price} руб.\n"
-                     f"📝 Описание: {description}\n"
-                     f"🖼 Фото: {photo_url}\n"
-                     )  # Добавляем ссылку на фото в конец сообщения
-        send_message(user_id, beer_info)
+                     f"📝 Описание: {description}\n")
+
+        # Проверяем, если photo_url и добавляем как attachment
+        attachment = photo_url if photo_url else None
+        send_message(user_id, beer_info, attachment=attachment)
     else:
         send_message(user_id, "❌ Пиво с таким ID не найдено.")
 
@@ -202,10 +240,11 @@ def check_beer_by_id(user_id, beer_id):
 def admin_help(user_id):
     help_text = (
         "👨‍💼 Список команд для администратора:\n\n"
-        "➕ /addbeer Название|Категория|Подкатегория|Объем|Алкоголь|Страна|Цена|Описание|URL_фото — добавить новое пиво\n"
+        "➕ /addbeer Название | Категория | Подкатегория | Объем | Алкоголь | Страна | Цена | Описание | URL_фото — добавить новое пиво\n"
         "🗑 /deletebeer ID — удалить пиво по ID\n"
         "📋 /viewall — посмотреть список всех пив\n"
         "🔍 /checkbeer ID — посмотреть информацию о пиве по ID\n"
+        "📝 /searchbeer Название — найти пиво по названию\n"
         "❓ /help — посмотреть список команд\n")
     send_message(user_id, help_text)
 
@@ -230,24 +269,124 @@ def admins_list(user_id):
     send_message(user_id, message)
 
 
-# Функции для отправки кндпок выбора
+def send_buttons(user_id, text, button_labels, add_back=False):
+    """Функция отправляет текст с кнопками, включая кнопку 'Назад', если add_back=True."""
+    buttons = [[{
+        "action": {
+            "label": label
+        }
+    } for label in row] for row in button_labels]
+    send_message(user_id, text, buttons=buttons, add_back=add_back)
+
+
+#ТЕСТИМ
+def search_beer_by_name(user_id, search_term):
+    """Ищет пиво по названию и отправляет результаты администратору."""
+    with db.cursor() as cursor:
+        cursor.execute(
+            "SELECT id, name, category, type, price, country, photo_url FROM beers WHERE name LIKE %s",
+            (f"%{search_term}%", ))
+        beers = cursor.fetchall()
+
+    if beers:
+        for beer in beers:
+            beer_id, name, category, beer_type, price, country, photo_url = beer
+            message = (f"🆔 ID: {beer_id}\n"
+                       f"🍺 Название: {name}\n"
+                       f"🏷 Категория: {category}\n"
+                       f"🔖 Подкатегория: {beer_type}\n"
+                       f"🌍 Страна: {country}\n"
+                       f"💰 Цена: {price} руб.\n")
+            attachment = photo_url if photo_url else None
+            send_message(user_id, message, attachment=attachment)
+    else:
+        send_message(user_id, "❌ Пиво с таким названием не найдено.")
+
+
+# Функции для каждого этапа
 def send_country_buttons(user_id):
-    # Функция для отправки кнопок выбора страны
-    send_message(user_id, "Выберите страну:", buttons=["Россия", "Импортное"])
+    send_buttons(
+        user_id,
+        "🍻 Добро пожаловать в наш мир пивных вкусов! 🌍\n\nИз какой страны вы бы хотели попробовать пиво? 🇩🇪🇧🇪🇺🇸\nВыберите страну, и мы подберем для вас лучшие сорта! 🍺",
+        [["Россия", "Импортное"]])
 
 
 def send_category_buttons(user_id):
-    # Функция для отправки кнопок каѴегорий
-    send_message(user_id,
-                 "Выберите категорию:",
-                 buttons=["Светлое", "Тёмное", "Янтарное", "Золотистое"])
+    send_buttons(user_id,
+                 "Теперь выберите категорию пива 🍺:",
+                 [["Светлое", "Тёмное"], ["Янтарное", "Золотистое"]],
+                 add_back=True)
 
 
-def send_subcategory_buttons(user_id):
-    # Функция для отправки кнопок подкатегорий
-    send_message(user_id,
-                 "Выберите подкатегорию:",
-                 buttons=["Лагерь", "Эль", "Пшеничное", "Портер"])
+def send_subcategory_buttons(user_id, category):
+    country = user_states[user_id]["country"]
+    with db.cursor() as cursor:
+        # Условие для импортного пива: страна != "Россия"
+        if country == "Импортное":
+            cursor.execute(
+                "SELECT DISTINCT type FROM beers WHERE category = %s AND country != %s",
+                (category, 'Россия'))
+        else:
+            # Для российского пива фильтруем по конкретной стране
+            cursor.execute(
+                "SELECT DISTINCT type FROM beers WHERE category = %s AND country = %s",
+                (category, country))
+        subcategories = cursor.fetchall()
+
+    # Проверяем и отправляем пользователю список подкатегорий
+    if subcategories:
+        send_buttons(user_id,
+                     "Теперь выберите подкатегорию пива 🍻:",
+                     [[sub[0] for sub in subcategories]],
+                     add_back=True)
+    else:
+        send_message(
+            user_id,
+            "Подкатегории отсутствуют. Попробуйте выбрать другую категорию.")
+        user_states[user_id]["stage"] = "awaiting_category"
+
+
+# Обработка нажатия кнопки "Назад"
+def handle_back(user_id, user_stage):
+    stages = {
+        "awaiting_category": ("awaiting_country", send_country_buttons),
+        "awaiting_subcategory": ("awaiting_category", send_category_buttons),
+        "awaiting_beer": ("awaiting_subcategory", send_subcategory_buttons)
+    }
+    if user_stage in stages:
+        new_stage, send_func = stages[user_stage]
+        send_func(user_id)
+        user_states[user_id]["stage"] = new_stage
+
+
+def handle_admin_commands(user_id, message, attachments=None):
+    """Обрабатывает команды администраторов."""
+    if message.startswith("/addbeer"):
+        add_beer_stage(user_id, message)
+    elif attachments:
+        add_beer_stage(user_id, "", attachments)
+    elif message.startswith("/deletebeer"):
+        try:
+            beer_id = int(message.split()[1])
+            delete_beer_by_id(user_id, beer_id)
+        except (IndexError, ValueError):
+            send_message(user_id, "Укажите корректный ID для удаления.")
+    elif message == "/viewall":
+        view_all_beers(user_id)
+    elif message.startswith("/checkbeer"):
+        try:
+            beer_id = int(message.split()[1])
+            check_beer_by_id(user_id, beer_id)
+        except (IndexError, ValueError):
+            send_message(user_id, "Укажите корректный ID для просмотра.")
+    elif message == "/help":
+        admin_help(user_id)
+    elif message == "/admins":
+        admins_list(user_id)
+    elif message.startswith("/searchbeer"):
+        # Ищем пиво по названию
+        search_term = message.replace("/searchbeer ", "").strip()
+        search_beer_by_name(user_id, search_term)
 
 
 # Основной цикл бота
@@ -255,174 +394,136 @@ for event in longpoll.listen():
     if event.type == VkEventType.MESSAGE_NEW and event.to_me:
         user_id = event.user_id
         message = event.text.strip(
-        )  # Приводим текст к нижнему регистру для удобства
+        )  #.lower() добавить после добавления всего пивка
 
-        # Приветственное сообщение и выбор страны
-        if message == "начать" or message == "главное меню" or message == "Главное меню" or message == "Начать" or message == "старт" or message == "Старт" or message == "привет" or message == "Привет":
-            send_message(
+        # Кнопка "Назад"
+        if message == "назад":
+            user_stage = user_states.get(user_id, {}).get("stage")
+            handle_back(user_id, user_stage)
+            continue
+
+        # Приветственные сообщения
+        greetings = {
+            "начать", "главное меню", "старт", "привет", "Привет", "Начать",
+            "Старт", "Меню", "Главное меню", "меню"
+        }
+        if message in greetings:
+            send_buttons(
                 user_id,
                 "🍻 Добро пожаловать в наш мир пивных вкусов! 🌍\n\nИз какой страны вы бы хотели попробовать пиво? 🇩🇪🇧🇪🇺🇸\nВыберите страну, и мы подберем для вас лучшие сорта! 🍺",
-                buttons=[[{
-                    "action": {
-                        "label": "Россия"
-                    }
-                }, {
-                    "action": {
-                        "label": "Импортное"
-                    }
-                }]])
+                [["Россия", "Импортное"]])
             user_states[user_id] = {"stage": "awaiting_country"}
             continue
 
         # Команды администратора
         if user_id in ADMIN_IDS:
-            if message.startswith("/addbeer"):
-                add_beer_stage(user_id, message)
-            elif event.attachments:  # Обрабатываем вложение, если оно есть
-                add_beer_stage(user_id, "", event.attachments)
-                continue
-            elif message.startswith("/deletebeer"):
-                try:
-                    beer_id = int(message.split()[1])
-                    delete_beer_by_id(user_id, beer_id)
-                except (IndexError, ValueError):
-                    send_message(user_id,
-                                 "Укажите корректный ID для удаления.")
-                continue
-            elif message == "/viewall":
-                view_all_beers(user_id)
-                continue
-            elif message.startswith("/checkbeer"):
-                try:
-                    beer_id = int(message.split()[1])
-                    check_beer_by_id(user_id, beer_id)
-                except (IndexError, ValueError):
-                    send_message(user_id,
-                                 "Укажите корректный ID для просмотра.")
-                continue
-            elif message == "/help":
-                admin_help(user_id)
-                continue
-            elif message == "/admins":
-                admins_list(user_id)
-                continue
+            handle_admin_commands(user_id, message, event.attachments)
+            continue
+        # Этапы выбора страны, категории и подкатегории
+        stage = user_states.get(user_id, {}).get("stage")
 
-        # Обработка выбора страны пользователем
-        elif user_id in user_states and user_states[user_id].get(
-                "stage") == "awaiting_country":
-            country = message.capitalize()
-            if country in ["Россия", "Импортное"]:
+        # Этап: Выбор страны
+        if stage == "awaiting_country":
+            if message.capitalize() in ["Россия", "Импортное"]:
                 user_states[user_id] = {
-                    "country": country,
+                    "country": message.capitalize(),
                     "stage": "awaiting_category"
                 }
-                send_message(user_id, f"🎉 Вы выбрали страну: {country} 🌍\n\n")
-
-                # Отправляем кнопки категорий
-                send_message(user_id,
-                             "Теперь выберите категорию пива 🍺:\n",
-                             buttons=[[{
-                                 "action": {
-                                     "label": "Светлое"
-                                 }
-                             }, {
-                                 "action": {
-                                     "label": "Тёмное"
-                                 }
-                             }],
-                                      [{
-                                          "action": {
-                                              "label": "Янтарное"
-                                          }
-                                      }, {
-                                          "action": {
-                                              "label": "Золотистое"
-                                          }
-                                      }]])
-            else:
-                send_message(
+                send_buttons(
                     user_id,
-                    "Пожалуйста, выберите одну из доступных стран: Россия или Импортное."
-                )
+                    f"🎉 Вы выбрали страну: {message.capitalize()} 🌍\n\nТеперь выберите категорию пива 🍺:",
+                    [["Светлое", "Тёмное"], ["Янтарное", "Золотистое"]],
+                    add_back=True)
+            else:
+                send_message(user_id,
+                             "Пожалуйста, выберите: Россия или Импортное.")
             continue
 
-        # Обработка выбора категории
-        elif user_id in user_states and user_states[user_id].get(
-                "stage") == "awaiting_category":
+        # Этап: Выбор категории
+        elif stage == "awaiting_category":
             category = message.capitalize()
             if category in ["Светлое", "Тёмное", "Янтарное", "Золотистое"]:
                 user_states[user_id]["category"] = category
                 user_states[user_id]["stage"] = "awaiting_subcategory"
-                send_message(user_id,
-                             f"🎉 Вы выбрали категорию: {category} 🍺\n\n")
 
-                # Получаем подкатегории для выбранной категории и страны
+                # Отображаем выбранную категорию
+                send_message(
+                    user_id,
+                    f"🎉 Вы выбрали категорию: {category} 🍺\n\nТеперь выберите подкатегорию пива 🍻:"
+                )
+
+                # Получаем подкатегории из БД для выбранной страны
+                country = user_states[user_id]["country"]
                 with db.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT DISTINCT type FROM beers WHERE category = %s AND country = %s",
-                        (category, user_states[user_id]["country"]))
+                    # Проверяем, выбрано ли "Импортное" (все страны, кроме России)
+                    if country == "Импортное":
+                        cursor.execute(
+                            "SELECT DISTINCT type FROM beers WHERE category = %s AND country != %s",
+                            (category, 'Россия'))
+                    else:
+                        # Иначе отображаем подкатегории для конкретной страны
+                        cursor.execute(
+                            "SELECT DISTINCT type FROM beers WHERE category = %s AND country = %s",
+                            (category, country))
                     subcategories = cursor.fetchall()
 
-                # Проверяем наличие подкатегорий и отправляем кнопки
+                # Проверяем и отправляем подкатегории пользователю
                 if subcategories:
-                    buttons = [[{
-                        "action": {
-                            "label": sub[0]
-                        }
-                    }] for sub in subcategories]
-                    send_message(user_id,
-                                 "Теперь выберите подкатегорию пива 🍻:\n",
-                                 buttons)
+                    send_buttons(user_id,
+                                 "Подкатегории:",
+                                 [[sub[0] for sub in subcategories]],
+                                 add_back=True)
                 else:
                     send_message(
                         user_id,
-                        "⚠️ Подкатегории для данной категории отсутствуют или данные не найдены 😕.\nПожалуйста, попробуйте выбрать другую категорию 🍻."
+                        "Подкатегории отсутствуют. Попробуйте выбрать другую категорию."
                     )
-                    user_states[user_id][
-                        "stage"] = "awaiting_category"  # Возврат на выбор категории
+                    user_states[user_id]["stage"] = "awaiting_category"
             else:
                 send_message(
                     user_id,
-                    "Пожалуйста, выберите одну из доступных категорий: Светлое, Тёмное, Янтарное, Золотистое."
-                )
+                    "Выберите: Светлое, Тёмное, Янтарное или Золотистое.")
             continue
 
-        # Обработка выбора подкатегории
-        elif user_id in user_states and user_states[user_id].get(
-                "stage") == "awaiting_subcategory":
+        # Этап: Выбор подкатегории
+        elif stage == "awaiting_subcategory":
             subcategory = message.capitalize()
-            category = user_states[user_id]["category"]
             country = user_states[user_id]["country"]
+            category = user_states[user_id]["category"]
 
-            # Проверяем, есть ли пиво в выбранной стране, категории и подкатегории
+            # Отправляем пиво для выбранной страны, категории и подкатегории
             with db.cursor() as cursor:
-                cursor.execute(
-                    "SELECT name, price, volume, description, photo_url FROM beers WHERE category = %s AND type = %s AND country = %s",
-                    (category, subcategory, country))
+                # Если страна "Импортное", выбираем все страны, кроме России
+                if country == "Импортное":
+                    cursor.execute(
+                        "SELECT name, price, volume, description, alcohol, photo_url FROM beers WHERE category = %s AND type = %s AND country != %s",
+                        (category, subcategory, 'Россия'))
+                else:
+                    # Для российских товаров выбираем конкретную страну
+                    cursor.execute(
+                        "SELECT name, price, volume, description, alcohol, photo_url FROM beers WHERE category = %s AND type = %s AND country = %s",
+                        (category, subcategory, country))
                 beers = cursor.fetchall()
 
-            # Отправка информации о пиве или сообщение об отсутствии вариантов
             if beers:
-                response = f"Пиво из страны '{country}' категории '{category}' подкатегории '{subcategory}':\n\n"
-                for beer in beers:
-                    name, price, volume, description, photo_url = beer
+                for name, price, volume, description, alcohol, photo_url in beers:
+                    text = (f"🍺 {name}\n"
+                            f"📏 Объем: {volume} л\n"
+                            f"💰 Цена: {price} руб.\n"
+                            f"📝 Описание: {description}\n"
+                            f"🥂 Алкоголь: {alcohol}%")
+                    send_message(user_id,
+                                 text,
+                                 attachment=photo_url if photo_url else None)
 
-                    # Проверяем, есть ли photo_id и корректный ли он
-                    if photo_url:
-                        # Отправляем сообщение с прикреплённой фотографией, если photo_id указан
-                        send_message(
-                            user_id,
-                            f"🍺 {name}\n📏 Объем: {volume} л\n💰 Цена: {price} руб.\n📝 Описание: {description}\n📸 Фото: {photo_url}",
-                        )
-                    else:
-                        # Отправляем сообщение без фотографии, если photo_id отсутствует
-                        send_message(
-                            user_id,
-                            f"🍺 {name}\n📏 Объем: {volume} л\n💰 Цена: {price} руб.\n📝 Описание: {description}"
-                        )
+                # Отправляем кнопку "Назад" после показа пива
+                send_buttons(
+                    user_id,
+                    f"Вы выбрали подкатегорию: {subcategory} 🍻\nХотите вернуться к выбору категории?",
+                    [["Назад"]])
             else:
                 send_message(
                     user_id,
-                    f"Пиво в категории '{category}' и подкатегории '{subcategory}' не найдено."
-                )
+                    f"Пиво в '{category}' и '{subcategory}' не найдено.")
+
             continue

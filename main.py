@@ -12,10 +12,14 @@ ADMIN_IDS = [
 ]  # ID администраторов 291170303 - Тёма, 570718317 - Марк, 242662322 - Сергей
 
 # Настройки базы данных MySQL
-DB_HOST = '79.137.195.165'
-DB_USER = 'gs2391'
+# DB_HOST = '79.137.195.165'
+# DB_USER = 'gs2391'
+# DB_PASSWORD = '123456Alko!'
+# DB_NAME = 'gs2391'
+DB_HOST = '51.91.215.125'
+DB_USER = 'gs279651'
 DB_PASSWORD = '123456Alko!'
-DB_NAME = 'gs2391'
+DB_NAME = 'gs279651'
 
 # Подключение к базе данных
 db = pymysql.connect(host=DB_HOST,
@@ -80,65 +84,96 @@ def upload_photo(photo_url):
     return f'photo{saved_photo["owner_id"]}_{saved_photo["id"]}'
 
 
-# Пример использования в функции добавления пива
 def add_beer_stage(user_id, message, attachments=None):
-    state = admin_states.get(user_id)
+    try:
+        state = admin_states.get(user_id)
 
-    if state is None:
-        args = message.replace("/addbeer ", "").split('|')
-        if len(args) < 9:
-            send_message(
-                user_id, "⚠️ Неверный формат. Используйте:\n"
-                "/addbeer 🍺 Название | 🏷 Категория | 🔖 Подкатегория | 📏 Объем (л) | 🍃 Алкоголь (%) | 🌍 Страна | 💰 Цена (руб.) | ✏️ Описание | 🖼 URL Фото"
-            )
-            return
+        if state is None:
+            try:
+                # Разбираем сообщение на параметры
+                args = message.replace("/addbeer ", "").split('|')
+                if len(args) < 9:
+                    send_message(
+                        user_id, "⚠️ Неверный формат. Используйте:\n"
+                        "/addbeer 🍺 Название | 🏷 Категория | 🔖 Подкатегория | 📏 Объем (л) | 🍃 Алкоголь (%) | 🌍 Страна | 💰 Цена (руб.) | ✏️ Описание | 🖼 URL Фото"
+                    )
+                    admin_states[user_id] = None  # Сбрасываем состояние
+                    return
 
-        name, category, subcategory, volume, alcohol, country, price, description, photo_url = args
-        admin_states[user_id] = {
-            "name": name,
-            "category": category,
-            "subcategory": subcategory,
-            "volume": volume,
-            "alcohol": alcohol,
-            "country": country,
-            "price": price,
-            "description": description,
-            "photo_url": photo_url,
-            "stage": "awaiting_photo"
-        }
+                # Извлекаем параметры
+                name, category, subcategory, volume, alcohol, country, price, description, photo_url = args
 
-        try:
-            photo_id = upload_photo(
-                photo_url)  # Загружаем фото и получаем photo_id
-            with db.cursor() as cursor:
-                sql = """INSERT INTO beers (name, category, type, volume, alcohol, country, price, description, photo_url)
-                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
-                cursor.execute(sql,
-                               (name, category, subcategory, volume,
-                                float(alcohol), country, float(price),
-                                description, photo_id))  # Используем photo_id
-                db.commit()
+                # Сохраняем состояние администратора
+                admin_states[user_id] = {
+                    "name": name,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "volume": volume,
+                    "alcohol": alcohol,
+                    "country": country,
+                    "price": price,
+                    "description": description,
+                    "photo_url": photo_url,
+                    "stage": "awaiting_photo"
+                }
 
-            send_message(
-                user_id,
-                f"🎉 Пиво '{name}' успешно добавлено в базу!\n\n"
-                f"🍺 Название: {name}\n"
-                f"🏷 Категория: {category}\n"
-                f"🔖 Подкатегория: {subcategory}\n"
-                f"📏 Объем: {volume} л\n"
-                f"🍃 Алкоголь: {alcohol}%\n"
-                f"🌍 Страна: {country}\n"
-                f"💰 Цена: {price} руб.\n"
-                f"✏️ Описание: {description}\n"
-                f"🖼 Фото:\n",  # Используем photo_id для отображения
-                attachment=photo_id)
+                # Пытаемся загрузить фото
+                try:
+                    photo_id = upload_photo(
+                        photo_url)  # Загружаем фото и получаем photo_id
+                except Exception as upload_error:
+                    send_message(user_id,
+                                 f"❌ Ошибка загрузки фото: {upload_error}")
+                    admin_states[user_id] = None  # Сбрасываем состояние
+                    return
 
-            # Сбрасываем состояние администратора для подготовки к следующему добавлению
-            admin_states[user_id] = None
+                # Пытаемся сохранить данные в базе данных
+                try:
+                    with db.cursor() as cursor:
+                        sql = """INSERT INTO beers (name, category, type, volume, alcohol, country, price, description, photo_url)
+                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+                        cursor.execute(
+                            sql,
+                            (name, category, subcategory, volume,
+                             float(alcohol), country, float(price),
+                             description, photo_id))  # Используем photo_id
+                        db.commit()
 
-        except Exception as e:
-            send_message(user_id, f"❌ Ошибка при добавлении пива: {e}")
-            return
+                    # Отправляем сообщение об успешном добавлении
+                    send_message(
+                        user_id,
+                        f"🎉 Пиво '{name}' успешно добавлено в базу!\n\n"
+                        f"🍺 Название: {name}\n"
+                        f"🏷 Категория: {category}\n"
+                        f"🔖 Подкатегория: {subcategory}\n"
+                        f"📏 Объем: {volume} л\n"
+                        f"🍃 Алкоголь: {alcohol}%\n"
+                        f"🌍 Страна: {country}\n"
+                        f"💰 Цена: {price} руб.\n"
+                        f"✏️ Описание: {description}\n"
+                        f"🖼 Фото:\n",  # Используем photo_id для отображения
+                        attachment=photo_id)
+
+                    # Сбрасываем состояние администратора для подготовки к следующему добавлению
+                    admin_states[user_id] = None
+
+                except Exception as db_error:
+                    send_message(
+                        user_id,
+                        f"❌ Ошибка при добавлении в базу данных: {db_error}")
+                    admin_states[user_id] = None  # Сбрасываем состояние
+                    return
+
+            except Exception as e:
+                # Обработка любых других ошибок
+                send_message(user_id,
+                             f"❌ Общая ошибка при обработке команды: {e}")
+                admin_states[user_id] = None  # Сбрасываем состояние
+
+    except Exception as fatal_error:
+        # Если что-то серьезно пошло не так, сообщаем об этом, но не прерываем работу бота
+        send_message(user_id, f"⚠️ Критическая ошибка: {fatal_error}")
+        admin_states[user_id] = None  # Сбрасываем состояние
 
 
 # Функция для удаления пива по ID

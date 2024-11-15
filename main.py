@@ -41,10 +41,12 @@ COUNTRIES = ["Россия", "Импортное"]
 
 
 def send_message(user_id,
-                 message,
-                 buttons=None,
-                 attachment=None,
-                 add_back=False):
+     message,
+     buttons=None,
+     attachment=None,
+     add_back=False):
+    MAX_MESSAGE_LENGTH = 4096  # Максимально допустимая длина сообщения ВКонтакте
+
     if buttons:
         keyboard = VkKeyboard(one_time=False)
         for row in buttons:
@@ -62,11 +64,24 @@ def send_message(user_id,
     else:
         keyboard = VkKeyboard.get_empty_keyboard()
 
-    vk.messages.send(user_id=user_id,
-                     message=message,
-                     random_id=0,
-                     keyboard=keyboard,
-                     attachment=attachment)
+    # Отправка сообщения с проверкой на длину
+    if len(message) <= MAX_MESSAGE_LENGTH:
+        # Если сообщение не превышает лимит, отправляем его целиком
+        vk.messages.send(user_id=user_id,
+                 message=message,
+                 random_id=0,
+                 keyboard=keyboard,
+                 attachment=attachment)
+    else:
+        # Если сообщение слишком длинное, разбиваем его на части и отправляем по очереди
+        for i in range(0, len(message), MAX_MESSAGE_LENGTH):
+            part = message[i:i + MAX_MESSAGE_LENGTH]
+            vk.messages.send(user_id=user_id,
+                 message=part,
+                 random_id=0,
+                 keyboard=keyboard,
+                 attachment=attachment)
+
 
 
 # Функция для загрузки фотографии на сервер VK и возвращения его ID
@@ -193,8 +208,6 @@ def delete_beer_by_id(user_id, beer_id):
         admin_states.pop(user_id, None)  # Сброс состояния
         return
 
-
-# Функция для просмотра всех доступных пив
 def view_all_beers(user_id):
     with db.cursor() as cursor:
         cursor.execute(
@@ -216,8 +229,8 @@ def view_all_beers(user_id):
             if beer_type not in country_category_data[country][category]:
                 country_category_data[country][category][beer_type] = []
 
-            # Добавляем название пива в соответствующую подкатегорию
-            country_category_data[country][category][beer_type].append(name)
+            # Добавляем ID и название пива в соответствующую подкатегорию
+            country_category_data[country][category][beer_type].append((beer_id, name))
 
         # Формируем и отправляем сообщения с итогом по странам, категориям и подкатегориям
         total_beers = 0
@@ -229,21 +242,20 @@ def view_all_beers(user_id):
             final_message += f"🌍 Страна: {country}\n\n"
             for category, types in categories.items():
                 final_message += f"  📘 Категория: {category}\n"
-                for beer_type, names in types.items():
-                    beer_count = len(names)
+                for beer_type, beers in types.items():
+                    beer_count = len(beers)
                     total_beers += beer_count
                     # Названия пива перечисляются после подкатегории
                     final_message += (f"    🔖 Подкатегория: {beer_type} "
                                       f"(всего {beer_count}):\n")
                     final_message += "".join(
-                        [f"      ----- {name}\n" for name in names])
+                        [f"      ----- ID: {beer_id} | {name}\n" for beer_id, name in beers])
 
         final_message += f"\n🍺 Всего доступно сортов пива: {total_beers}"
 
         send_message(user_id, final_message)
     else:
         send_message(user_id, "❌ В данный момент нет доступных пив.")
-
 
 # Функция для просмотра информации о пиве по ID с фото
 def check_beer_by_id(user_id, beer_id):

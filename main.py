@@ -1,3 +1,4 @@
+1)
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
@@ -114,8 +115,8 @@ def add_beer_stage(user_id, message, attachments=None):
                     )
                     admin_states[user_id] = None  # Сбрасываем состояние
                     return
-
-                # Извлекаем параметры
+2)
+ # Извлекаем параметры
                 name, category, subcategory, volume, alcohol, country, price, description, photo_url = args
 
                 # Сохраняем состояние администратора
@@ -228,7 +229,9 @@ def view_all_beers(user_id):
                 country_category_data[country][category] = {}
             if beer_type not in country_category_data[country][category]:
                 country_category_data[country][category][beer_type] = []
+3)
 
+           
             # Добавляем ID и название пива в соответствующую подкатегорию
             country_category_data[country][category][beer_type].append((beer_id, name))
 
@@ -343,6 +346,7 @@ def search_beer_by_name(user_id, search_term):
                        f"🏷 Категория: {category}\n"
                        f"🔖 Подкатегория: {beer_type}\n"
                        f"🌍 Страна: {country}\n"
+4)
                        f"💰 Цена: {price} руб.\n")
             attachment = photo_url if photo_url else None
             send_message(user_id, message, attachment=attachment)
@@ -458,8 +462,9 @@ for event in longpoll.listen():
             send_buttons(
                 user_id,
                 "🍻 Добро пожаловать в наш мир пивных вкусов! 🌍\n\nИз какой страны вы бы хотели попробовать пиво? 🇩🇪🇧🇪🇺🇸\nВыберите страну, и мы подберем для вас лучшие сорта! 🍺",
-                [["Россия", "Импортное"]])
-            user_states[user_id] = {"stage": "awaiting_country"}
+                [["Россия", "Импортно
+5)
+   user_states[user_id] = {"stage": "awaiting_country"}
             continue
 
         # Команды администратора
